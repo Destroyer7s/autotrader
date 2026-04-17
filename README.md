@@ -10,6 +10,8 @@ A production-oriented Python trading system scaffold for real broker execution w
 - Trading engine with optional order confirmation
 - CLI commands for account checks, dry runs, and live execution
 - Unit tests for risk and strategy logic
+- Append-only JSONL trade journal for auditability
+- GitHub Actions CI for Python 3.9 to 3.12
 
 ## Important safety notes
 
@@ -63,6 +65,7 @@ trader-cli run --symbol AAPL --capital 1000 --dry-run --strategy adaptive_ensemb
 - `src/trader_app/risk/`: risk policy and position sizing
 - `src/trader_app/execution/`: trading engine orchestration
 - `src/trader_app/cli.py`: command line interface
+- `src/trader_app/utils/trade_journal.py`: structured trade and decision audit log
 
 ## Suggested next upgrades
 
@@ -71,3 +74,9 @@ trader-cli run --symbol AAPL --capital 1000 --dry-run --strategy adaptive_ensemb
 - Add async stream handling for real-time bars
 - Add scheduled runs and alerting
 - Add broker abstraction for Interactive Brokers/Tradier
+
+## Repo hygiene
+
+- CI workflow: .github/workflows/ci.yml
+- Contribution guide: CONTRIBUTING.md
+- Security policy: SECURITY.md

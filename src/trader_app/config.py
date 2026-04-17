@@ -3,6 +3,13 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+try:
+    from dotenv import load_dotenv
+except Exception:  # pragma: no cover
+    # Optional dependency fallback keeps runtime resilient.
+    def load_dotenv() -> None:
+        return None
+
 
 def _get_bool(name: str, default: bool) -> bool:
     raw = os.getenv(name)
@@ -43,6 +50,8 @@ class Settings:
 
 
 def load_settings() -> Settings:
+    # Load environment variables from .env for local development convenience.
+    load_dotenv()
     return Settings(
         trader_env=os.getenv("TRADER_ENV", "dev"),
         alpaca_api_key=os.getenv("ALPACA_API_KEY", ""),

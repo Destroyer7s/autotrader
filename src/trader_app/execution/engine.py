@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import asdict
 
 from trader_app.broker.alpaca import AlpacaClient
 from trader_app.models import OrderRequest, OrderResult
 from trader_app.risk.manager import RiskManager
 from trader_app.strategy.base import Strategy
+from trader_app.utils.trade_journal import TradeJournal
 
 LOGGER = logging.getLogger(__name__)
 
@@ -18,12 +20,14 @@ class TradingEngine:
         strategy: Strategy,
         require_confirmation: bool,
         enable_live_trading: bool,
+        journal: TradeJournal | None = None,
     ) -> None:
         self.broker = broker
         self.risk_manager = risk_manager
         self.strategy = strategy
         self.require_confirmation = require_confirmation
         self.enable_live_trading = enable_live_trading
+        self.journal = journal or TradeJournal()
 
     def evaluate_and_trade(
         self,
@@ -44,11 +48,27 @@ class TradingEngine:
             equity_now=account.equity,
         ):
             LOGGER.warning("Risk halt active. Daily loss threshold reached or invalid baseline.")
+            self.journal.append_event(
+                "risk_halt",
+                {
+                    "symbol": symbol,
+                    "equity": account.equity,
+                    "buying_power": account.buying_power,
+                },
+            )
             return None
 
         # Ask the strategy for directional intent using recent market history.
         signal = self.strategy.signal(recent_prices)
         LOGGER.info("Strategy signal for %s: %s", symbol, signal)
+        self.journal.append_event(
+            "strategy_signal",
+            {
+                "symbol": symbol,
+                "signal": signal,
+                "price_points": len(recent_prices),
+            },
+        )
         if signal not in {"buy", "sell"}:
             return None
 
@@ -65,6 +85,15 @@ class TradingEngine:
         )
         if qty <= 0:
             LOGGER.warning("Calculated qty is 0. No trade sent.")
+            self.journal.append_event(
+                "zero_quantity",
+                {
+                    "symbol": symbol,
+                    "signal": signal,
+                    "price": price,
+                    "budget": budget,
+                },
+            )
             return None
 
         # Build protective bracket targets before sending the order.
@@ -80,14 +109,39 @@ class TradingEngine:
         # Dry-run mode is mandatory for safe local iteration.
         if dry_run or not self.enable_live_trading:
             LOGGER.info("Dry run only. Proposed order: %s", request)
+            self.journal.append_event(
+                "proposed_order",
+                {
+                    "symbol": symbol,
+                    "dry_run": dry_run,
+                    "live_enabled": self.enable_live_trading,
+                    "request": asdict(request),
+                },
+            )
             return None
 
         # Human-in-the-loop confirmation is highly recommended for live trading.
         if self.require_confirmation and not self._confirm_request(request, price):
             LOGGER.info("Order canceled by operator.")
+            self.journal.append_event(
+                "order_canceled",
+                {
+                    "symbol": symbol,
+                    "request": asdict(request),
+                },
+            )
             return None
 
-        return self.broker.submit_order(request)
+        result = self.broker.submit_order(request)
+        self.journal.append_event(
+            "order_submitted",
+            {
+                "symbol": symbol,
+                "request": asdict(request),
+                "result": asdict(result),
+            },
+        )
+        return result
 
     def _confirm_request(self, request: OrderRequest, price: float) -> bool:
         total = request.qty * price
