@@ -3,15 +3,20 @@ from __future__ import annotations
 import argparse
 import logging
 import random
+import time
 
+from trader_app.alerts.notifier import Notifier
+from trader_app.analytics.performance import PerformanceAnalytics
 from trader_app.broker.alpaca import AlpacaClient
 from trader_app.config import load_settings
 from trader_app.execution.engine import TradingEngine
+from trader_app.execution.portfolio import PortfolioAllocator
 from trader_app.risk.manager import RiskManager, RiskPolicy
 from trader_app.strategy.adaptive_ensemble import AdaptiveEnsembleStrategy
 from trader_app.strategy.mean_reversion import MeanReversionStrategy
 from trader_app.strategy.momentum import MomentumStrategy
 from trader_app.utils.logging_setup import configure_logging
+from trader_app.utils.sqlite_journal import SqliteTradeJournal
 
 
 LOGGER = logging.getLogger(__name__)
@@ -63,6 +68,7 @@ def build_engine() -> TradingEngine:
         strategy=_build_strategy(settings.default_strategy),
         require_confirmation=settings.require_confirmation,
         enable_live_trading=settings.enable_live_trading,
+        journal=SqliteTradeJournal(settings.journal_db_path),
     )
 
 
@@ -121,6 +127,103 @@ def cmd_run(symbol: str, capital: float, dry_run: bool, confirm: bool, strategy:
     return 0
 
 
+def cmd_run_portfolio(
+    symbols: str,
+    capital: float,
+    dry_run: bool,
+    confirm: bool,
+    strategy: str | None,
+) -> int:
+    symbol_list = [item.strip().upper() for item in symbols.split(",") if item.strip()]
+    if not symbol_list:
+        print("No symbols provided.")
+        return 1
+
+    allocator = PortfolioAllocator()
+    allocations = allocator.allocate(symbol_list, capital)
+    if not allocations:
+        print("Unable to allocate portfolio capital.")
+        return 1
+
+    engine = build_engine()
+    if strategy:
+        engine.strategy = _build_strategy(strategy)
+    if confirm:
+        engine.require_confirmation = True
+
+    for alloc in allocations:
+        prices = _simulate_recent_prices(seed_price=100 + random.uniform(-8, 8))
+        result = engine.evaluate_and_trade(
+            symbol=alloc.symbol,
+            capital_hint=alloc.dollars,
+            recent_prices=prices,
+            dry_run=dry_run,
+        )
+        status = "submitted" if result is not None else "skipped"
+        print(f"{alloc.symbol}: allocation=${alloc.dollars:.2f} status={status}")
+    return 0
+
+
+def cmd_analytics(limit: int) -> int:
+    settings = load_settings()
+    analytics = PerformanceAnalytics(SqliteTradeJournal(settings.journal_db_path))
+    report = analytics.summary(limit=limit)
+    print("Events analyzed:", report["events_analyzed"])
+    print("Orders submitted:", report["orders_submitted"])
+    print("Orders canceled:", report["orders_canceled"])
+    print("Dry-run proposals:", report["orders_proposed_dryrun"])
+    print("Submission rate:", f"{report['submission_rate']:.2%}")
+    print("Event counts:", report["event_counts"])
+    return 0
+
+
+def cmd_schedule(
+    symbols: str,
+    capital: float,
+    interval_seconds: int,
+    iterations: int,
+    dry_run: bool,
+    confirm: bool,
+    strategy: str | None,
+) -> int:
+    settings = load_settings()
+    notifier = Notifier(settings.discord_webhook_url)
+    symbol_list = [item.strip().upper() for item in symbols.split(",") if item.strip()]
+    if not symbol_list:
+        print("No symbols provided.")
+        return 1
+
+    for cycle in range(1, iterations + 1):
+        print(f"Schedule cycle {cycle}/{iterations}")
+        cmd_run_portfolio(
+            symbols=",".join(symbol_list),
+            capital=capital,
+            dry_run=dry_run,
+            confirm=confirm,
+            strategy=strategy,
+        )
+
+        message = (
+            f"AutoTrader schedule cycle {cycle}/{iterations} completed "
+            f"for symbols: {', '.join(symbol_list)}"
+        )
+        notifier.notify_discord(message)
+        notifier.notify_email(
+            message=message,
+            smtp_host=settings.smtp_host,
+            smtp_port=settings.smtp_port,
+            smtp_user=settings.smtp_user,
+            smtp_password=settings.smtp_password,
+            to_email=settings.alert_to_email,
+            from_email=settings.alert_from_email,
+        )
+
+        if cycle < iterations:
+            time.sleep(max(1, interval_seconds))
+
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="AutoTrader CLI")
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
@@ -139,6 +242,25 @@ def _build_parser() -> argparse.ArgumentParser:
     run.add_argument("--confirm", action="store_true")
     run.add_argument("--strategy", choices=["momentum", "mean_reversion", "adaptive_ensemble"])
 
+    run_portfolio = sub.add_parser("run-portfolio", help="Run strategy across multiple symbols")
+    run_portfolio.add_argument("--symbols", required=True, help="Comma-separated symbols, e.g. AAPL,MSFT,NVDA")
+    run_portfolio.add_argument("--capital", required=True, type=float)
+    run_portfolio.add_argument("--dry-run", action="store_true")
+    run_portfolio.add_argument("--confirm", action="store_true")
+    run_portfolio.add_argument("--strategy", choices=["momentum", "mean_reversion", "adaptive_ensemble"])
+
+    analytics = sub.add_parser("analytics", help="Show summary metrics from SQLite journal")
+    analytics.add_argument("--limit", type=int, default=1000)
+
+    schedule = sub.add_parser("schedule", help="Run portfolio strategy on an interval with alerts")
+    schedule.add_argument("--symbols", required=True, help="Comma-separated symbols")
+    schedule.add_argument("--capital", required=True, type=float)
+    schedule.add_argument("--interval-seconds", type=int, default=300)
+    schedule.add_argument("--iterations", type=int, default=3)
+    schedule.add_argument("--dry-run", action="store_true")
+    schedule.add_argument("--confirm", action="store_true")
+    schedule.add_argument("--strategy", choices=["momentum", "mean_reversion", "adaptive_ensemble"])
+
     return parser
 
 
@@ -156,6 +278,26 @@ def main() -> int:
         return cmd_run(
             symbol=args.symbol,
             capital=args.capital,
+            dry_run=args.dry_run,
+            confirm=args.confirm,
+            strategy=args.strategy,
+        )
+    if args.command == "run-portfolio":
+        return cmd_run_portfolio(
+            symbols=args.symbols,
+            capital=args.capital,
+            dry_run=args.dry_run,
+            confirm=args.confirm,
+            strategy=args.strategy,
+        )
+    if args.command == "analytics":
+        return cmd_analytics(args.limit)
+    if args.command == "schedule":
+        return cmd_schedule(
+            symbols=args.symbols,
+            capital=args.capital,
+            interval_seconds=args.interval_seconds,
+            iterations=args.iterations,
             dry_run=args.dry_run,
             confirm=args.confirm,
             strategy=args.strategy,

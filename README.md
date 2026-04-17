@@ -6,11 +6,14 @@ A production-oriented Python trading system scaffold for real broker execution w
 
 - Broker API client (Alpaca implementation)
 - Strategy framework (adaptive ensemble, momentum, mean reversion)
+- Multi-symbol portfolio allocation runner
 - Risk manager with hard limits
 - Trading engine with optional order confirmation
 - CLI commands for account checks, dry runs, and live execution
 - Unit tests for risk and strategy logic
 - Append-only JSONL trade journal for auditability
+- SQLite trade journal with analytics summary command
+- Scheduler command with Discord/email alerts
 - GitHub Actions CI for Python 3.9 to 3.12
 
 ## Important safety notes
@@ -53,6 +56,15 @@ trader-cli run --symbol AAPL --capital 1000 --confirm
 
 # Explicitly choose the adaptive ensemble strategy
 trader-cli run --symbol AAPL --capital 1000 --dry-run --strategy adaptive_ensemble
+
+# Run across multiple symbols with automatic capital allocation
+trader-cli run-portfolio --symbols AAPL,MSFT,NVDA --capital 3000 --dry-run
+
+# View persisted analytics from the SQLite journal
+trader-cli analytics --limit 200
+
+# Schedule repeated cycles with optional alerts
+trader-cli schedule --symbols AAPL,MSFT --capital 2000 --interval-seconds 300 --iterations 4 --dry-run
 ```
 
 ## Architecture
@@ -64,8 +76,12 @@ trader-cli run --symbol AAPL --capital 1000 --dry-run --strategy adaptive_ensemb
 	- Includes `AdaptiveEnsembleStrategy` with trend, momentum, RSI, mean-reversion, and volatility gating
 - `src/trader_app/risk/`: risk policy and position sizing
 - `src/trader_app/execution/`: trading engine orchestration
+- `src/trader_app/execution/portfolio.py`: multi-symbol capital allocator
 - `src/trader_app/cli.py`: command line interface
 - `src/trader_app/utils/trade_journal.py`: structured trade and decision audit log
+- `src/trader_app/utils/sqlite_journal.py`: durable SQLite journal used by analytics
+- `src/trader_app/analytics/performance.py`: event analytics summaries
+- `src/trader_app/alerts/notifier.py`: Discord/email notification adapters
 
 ## Suggested next upgrades
 

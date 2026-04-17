@@ -46,6 +46,14 @@ class Settings:
     max_open_positions: int
     stop_loss_pct: float
     take_profit_pct: float
+    journal_db_path: str
+    discord_webhook_url: str
+    smtp_host: str
+    smtp_port: int
+    smtp_user: str
+    smtp_password: str
+    alert_to_email: str
+    alert_from_email: str
 
 
 
@@ -65,4 +73,12 @@ def load_settings() -> Settings:
         max_open_positions=_get_int("MAX_OPEN_POSITIONS", 5),
         stop_loss_pct=_get_float("STOP_LOSS_PCT", 0.02),
         take_profit_pct=_get_float("TAKE_PROFIT_PCT", 0.05),
+        journal_db_path=os.getenv("JOURNAL_DB_PATH", "logs/trade_journal.db"),
+        discord_webhook_url=os.getenv("DISCORD_WEBHOOK_URL", ""),
+        smtp_host=os.getenv("SMTP_HOST", ""),
+        smtp_port=_get_int("SMTP_PORT", 587),
+        smtp_user=os.getenv("SMTP_USER", ""),
+        smtp_password=os.getenv("SMTP_PASSWORD", ""),
+        alert_to_email=os.getenv("ALERT_TO_EMAIL", ""),
+        alert_from_email=os.getenv("ALERT_FROM_EMAIL", ""),
     )

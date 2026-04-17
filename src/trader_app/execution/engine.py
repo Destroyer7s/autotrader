@@ -2,12 +2,18 @@ from __future__ import annotations
 
 import logging
 from dataclasses import asdict
+from typing import Protocol
 
 from trader_app.broker.alpaca import AlpacaClient
 from trader_app.models import OrderRequest, OrderResult
 from trader_app.risk.manager import RiskManager
 from trader_app.strategy.base import Strategy
 from trader_app.utils.trade_journal import TradeJournal
+
+
+class EventJournal(Protocol):
+    def append_event(self, event_type: str, payload: dict) -> None:
+        ...
 
 LOGGER = logging.getLogger(__name__)
 
@@ -20,7 +26,7 @@ class TradingEngine:
         strategy: Strategy,
         require_confirmation: bool,
         enable_live_trading: bool,
-        journal: TradeJournal | None = None,
+        journal: EventJournal | None = None,
     ) -> None:
         self.broker = broker
         self.risk_manager = risk_manager
